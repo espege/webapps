@@ -37,3 +37,14 @@ override.tf.json
 terraform.rc
 apps.yaml
 .terraform.lock.hcl
+
+# Ignore files with sensitive values
+import.tf
+
+# Ignore yaml files that are not names demo.yaml
+*.yml
+*.yaml
+!sample.yaml
+# Ignore tftpl files that are not names demo.yaml
+*.tftpl
+!sample.tftpl

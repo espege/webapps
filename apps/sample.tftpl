@@ -1,0 +1,18 @@
+app_name: ${file_name}
+app_domain_name: ${personal_domain}
+app_subdomain_name: ${file_name}
+app_identity_providers:
+  - ${google_auth}
+policies:
+  - policy_key: "sample" # Must match a reusable_access_policy file name
+    precedence: 1
+app_tags:
+  - docker
+destinations:
+  - type: public
+    uri: "${file_name}.${personal_domain}"
+tunnel_routing:
+  tunnel_id: ${home_lab_tunnel}
+ingress:
+  protocol: https
+  port: 123

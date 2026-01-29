@@ -1,100 +1,67 @@
-# export TF_VAR_CLOUDFLARE_API_TOKEN=xyz
-
-terraform {
-  required_providers {
-    cloudflare = {
-      source  = "cloudflare/cloudflare"
-      version = "5.1.0"
-    }
-  }
-}
-
-provider "cloudflare" {
-  api_token = var.CLOUDFLARE_API_TOKEN
-}
-
-resource "cloudflare_account" "personal" {
+resource "cloudflare_account" "my_account" {
   name = var.CLOUDFLARE_ACCOUNT_NAME
   type = "standard"
 }
 
-resource "cloudflare_zone" "main_zone" {
+resource "cloudflare_zone" "personal_domain" {
   account = {
-    id = var.DOMAIN_ID
+    id = cloudflare_account.my_account.id
   }
-  name = var.DOMAIN_NAME
+  name = var.CLOUDFLARE_GENERIC_DOMAIN_NAME
   type = "full"
 }
 
-# Access Apps
-
 resource "cloudflare_zero_trust_access_identity_provider" "google" {
-  account_id = cloudflare_account.personal.id
   config = {
     client_id    = var.GOOGLE_CLIENT_ID
     pkce_enabled = true
   }
-  scim_config = {
-    enabled                  = false
-    identity_update_behavior = "no_action"
-    seat_deprovision         = false
-    user_deprovision         = false
-  }
-  name = "Google"
-  type = "google"
+  name       = "Google"
+  type       = "google"
+  account_id = cloudflare_account.my_account.id
 }
 
-module "zero_trust_app_tags" {
-  source     = "./modules/tags"
+resource "cloudflare_zero_trust_access_tag" "tags" {
   for_each   = toset(local.all_tags)
-  TAG_NAME   = each.value
-  ACCOUNT_ID = cloudflare_account.personal.id
+  account_id = cloudflare_account.my_account.id
+  name       = each.value
 }
 
-module "google_auth_acess_app" {
-  source             = "./modules/access_apps"
-  for_each           = { for k, v in local.apps_yaml : k => v }
-  app_domain_name    = each.value.domain
-  app_type           = each.value.type
-  app_name           = each.value.name
-  zone_id            = cloudflare_zone.main_zone.id
-  identity_providers = [cloudflare_zero_trust_access_identity_provider.google.id]
-  uri_list           = each.value.destinations
-  policies = [{
-    id       = local.policies.global_pol_homeusers.id
-    decision = "allow"
+module "my_apps" {
+  source                 = "./modules/self_hosted_apps"
+  depends_on             = [cloudflare_zero_trust_access_tag.tags]
+  for_each               = local.applications_data
+  destinations           = each.value.destinations
+  app_domain_name        = each.value.app_domain_name
+  app_name               = each.value.app_name
+  app_tags               = each.value.app_tags
+  app_zone_id            = cloudflare_zone.personal_domain.id
+  app_subdomain_name     = each.value.app_subdomain_name
+  app_identity_providers = each.value.app_identity_providers
+  app_policies = [for k, v in each.value.policies : {
+    id         = (cloudflare_zero_trust_access_policy.access_policy[v.policy_key]).id
+    precedence = v.precedence
   }]
-  self_hosted_domains = each.value.self_hosted_domains
-  session_duration    = each.value.session_duration
-  tags                = each.value.tags
+  tunnel_routing = {
+    tunnel_id = each.value.tunnel_routing.tunnel_id
+  }
 }
 
-# Users and Groups
-
-resource "cloudflare_zero_trust_access_group" "home_users" {
-  include    = var.HOME_USERS_ACCESS_GROUP.include
-  require    = var.HOME_USERS_ACCESS_GROUP.require
-  name       = var.HOME_USERS_ACCESS_GROUP.name
-  zone_id    = cloudflare_zone.main_zone.id
-  is_default = false
+resource "cloudflare_zero_trust_tunnel_cloudflared" "tunnels" {
+  for_each   = local.tunnel_data
+  name       = each.value.name
+  account_id = each.value.account_id == "default" ? cloudflare_account.my_account.id : each.value.account_id
+  config_src = "cloudflare"
+  depends_on = [cloudflare_account.my_account]
 }
 
-
-# Global (reusable) policy
-
-resource "cloudflare_zero_trust_access_policy" "Global_Pol_Homeowners" {
-  account_id = cloudflare_account.personal.id
-  name       = "Allow HomeOwners"
-  decision   = "allow"
-  include = [{
-    group = {
-      id = cloudflare_zero_trust_access_group.home_users.id
-    }
-  }]
-  require = [{
-    group = {
-      id = cloudflare_zero_trust_access_group.home_users.id
-    }
-  }]
-  session_duration = "72h"
+resource "cloudflare_zero_trust_tunnel_cloudflared_config" "home_lab_config" {
+  account_id = cloudflare_account.my_account.id
+  tunnel_id  = cloudflare_zero_trust_tunnel_cloudflared.tunnels["home_lab_tunnel"].id
+  source     = "cloudflare"
+  config = {
+    ingress = concat(local.tunnel_ingress, [{
+      service = "http_status:404" # Catch-all
+    }])
+  }
 }

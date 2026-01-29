@@ -1,0 +1,8 @@
+policy_name: "Sample Policy"
+session_duration: "24h"
+include:
+  - group:
+      id: ${access_group_name}
+require:
+  - login_method:
+      id: ${google_auth}
