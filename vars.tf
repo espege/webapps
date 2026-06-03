@@ -23,6 +23,15 @@ variable "REVERSE_PROXY_INTERNAL_IP_ADDRESS" {
   description = "Private IP address for reverse proxy. Used to create cloudflare_zero_trust_tunnel_cloudflared_config"
   type        = string
 }
+
+variable "EMAIL_LISTS" {
+  description = "Map of email lists to create. Reused in access groups. Key is the name of the email list, value is a list of emails to add to the list."
+  type        = map(list(string))
+  default     = {
+    "engineering" = []
+  }
+}
+
 locals {
   tunnel_file         = [for f in fileset(path.module, "${path.module}/tunnels/*.yaml") : f if !endswith(f, "sample.yaml")]
   tunnel_data         = { for tun in local.tunnel_file : element(split("/", trimsuffix(tun, ".yaml")), -1) => yamldecode(file(tun)) }
@@ -63,9 +72,5 @@ locals {
     }
   ]
   all_tags = concat([for k, v in local.applications_data : v.app_tags]...)
-
-  # Emails
-  email_lists      = [for f in fileset(path.module, "${path.module}/reusable_email_lists/*.yaml") : f if basename(f) != "sample.yaml"]
-  email_lists_data = { for email_list in local.email_lists : element(split("/", trimsuffix(email_list, ".yaml")), -1) => yamldecode(file(email_list)) }
 
 }

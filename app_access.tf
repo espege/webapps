@@ -1,6 +1,6 @@
 # Required for reusable access groups with email lists
 resource "cloudflare_zero_trust_list" "email_list" {
-  for_each    = local.email_lists_data
+  for_each    = var.EMAIL_LISTS
   account_id  = cloudflare_account.my_account.id
   name        = each.key
   type        = "EMAIL"
