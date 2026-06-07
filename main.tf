@@ -28,27 +28,27 @@ resource "cloudflare_zero_trust_access_tag" "tags" {
 }
 
 module "my_apps" {
+  for_each               = local.applications
   source                 = "./modules/self_hosted_apps"
   depends_on             = [cloudflare_zero_trust_access_tag.tags]
-  for_each               = local.applications_data
   destinations           = each.value.destinations
-  app_domain_name        = each.value.app_domain_name
-  app_name               = each.value.app_name
+  app_domain_name        = each.value.domain
+  app_subdomain_name     = each.value.subdomain
+  app_name               = each.value.name
   app_tags               = each.value.app_tags
   app_zone_id            = cloudflare_zone.personal_domain.id
-  app_subdomain_name     = each.value.app_subdomain_name
-  app_identity_providers = each.value.app_identity_providers
+  app_identity_providers = each.value.identity_providers
   app_policies = [for k, v in each.value.policies : {
     id         = (cloudflare_zero_trust_access_policy.access_policy[v.policy_key]).id
     precedence = v.precedence
   }]
   tunnel_routing = {
-    tunnel_id = each.value.tunnel_routing.tunnel_id
+    tunnel_id = each.value.tunnel_id
   }
 }
 
 resource "cloudflare_zero_trust_tunnel_cloudflared" "tunnels" {
-  for_each   = local.tunnel_data
+  for_each   = var.cloudflare_tunnels
   name       = each.value.name
   account_id = each.value.account_id == "default" ? cloudflare_account.my_account.id : each.value.account_id
   config_src = "cloudflare"
@@ -60,8 +60,8 @@ resource "cloudflare_zero_trust_tunnel_cloudflared_config" "home_lab_config" {
   tunnel_id  = cloudflare_zero_trust_tunnel_cloudflared.tunnels["home_lab_tunnel"].id
   source     = "cloudflare"
   config = {
-    ingress = concat(local.tunnel_ingress, [{
-      service = "http_status:404" # Catch-all
-    }])
+    ingress = concat(local.tunnel_ingress,
+      [{ service = "http_status:404" }] # Catch-all
+    )
   }
 }

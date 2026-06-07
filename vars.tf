@@ -19,58 +19,162 @@ variable "GOOGLE_CLIENT_ID" {
   type        = string
 }
 
-variable "REVERSE_PROXY_INTERNAL_IP_ADDRESS" {
-  description = "Private IP address for reverse proxy. Used to create cloudflare_zero_trust_tunnel_cloudflared_config"
-  type        = string
-}
 
 variable "EMAIL_LISTS" {
   description = "Map of email lists to create. Reused in access groups. Key is the name of the email list, value is a list of emails to add to the list."
   type        = map(list(string))
-  default     = {
+  default = {
     "engineering" = []
+  }
+  validation {
+    condition     = alltrue([for email_list in values(var.EMAIL_LISTS) : length(email_list) >= 1]) && alltrue([for email_list in values(var.EMAIL_LISTS) : alltrue([for email in email_list : can(regex("^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$", email))])])
+    error_message = "Each email list must contain at least one valid email address."
   }
 }
 
-locals {
-  tunnel_file         = [for f in fileset(path.module, "${path.module}/tunnels/*.yaml") : f if !endswith(f, "sample.yaml")]
-  tunnel_data         = { for tun in local.tunnel_file : element(split("/", trimsuffix(tun, ".yaml")), -1) => yamldecode(file(tun)) }
-  access_groups_files = [for f in fileset(path.module, "${path.module}/reusable_access_groups/*.tftpl") : f if !endswith(f, "sample.tftpl")]
-
-  access_groups_data = {
-    for access_file in local.access_groups_files : basename(trimsuffix(access_file, ".tftpl")) => yamldecode(templatefile(access_file, {
-      email_list = cloudflare_zero_trust_list.email_list[trimsuffix(basename(access_file), ".tftpl")].id
-    }))
-  }
-
-
-  # Access Policies
-  access_policy_files = [for f in fileset(path.module, "${path.module}/reusable_access_policies/*.tftpl") : f if !endswith(f, "sample.tftpl")]
-  access_policy_data = {
-    for access_file in local.access_policy_files : basename(trimsuffix(access_file, ".tftpl")) => yamldecode(templatefile(access_file, {
-      access_group_name = cloudflare_zero_trust_access_group.my_access_groups[trimsuffix(basename(access_file), ".tftpl")].id
-      google_auth       = cloudflare_zero_trust_access_identity_provider.google.id
-    }))
-  }
-
-  # Applications
-  applications = [for f in fileset(path.module, "${path.module}/apps/*.tftpl") : f if !endswith(f, "sample.tftpl")]
-  applications_data = {
-    for app in local.applications : basename(trimsuffix(app, ".tftpl")) => yamldecode(templatefile(app, {
-      personal_domain = cloudflare_zone.personal_domain.name
-      google_auth     = cloudflare_zero_trust_access_identity_provider.google.id
-      file_name       = basename(trimsuffix(app, ".tftpl"))
-      proxy_ip        = var.REVERSE_PROXY_INTERNAL_IP_ADDRESS
-      home_lab_tunnel = cloudflare_zero_trust_tunnel_cloudflared.tunnels["home_lab_tunnel"].id
-    }))
-  }
-  tunnel_ingress = [
-    for cnf in values(local.applications_data) : {
-      service        = "${try(cnf.ingress.protocol, "https")}://${try(cnf.ingress.host, "localhost")}:${try(cnf.ingress.port, "443")}"
-      hostname       = "${cnf.app_subdomain_name}.${cnf.app_domain_name}"
-      origin_request = try(cnf.ingress.origin_request, null)
+variable "access_groups" {
+  description = "Map of access groups to create. Key is the name of the access group, value is an object with the following properties: name (string), include (list of maps), require (list of maps), exclude (list of maps). The include, require, and exclude properties should be lists of maps that define the criteria for including, requiring, or excluding users from the access group. For example, an include map could look like { email_list = { id = \"email_list_id\" } } to include users from a specific email list."
+  type = map(object({
+    name       = string
+    is_default = optional(bool, false)
+    include    = optional(list(map(map(string))), [])
+    require    = optional(list(map(map(string))), [{ "geo" : { "country_code" = "PLACEHOLDER" } }])
+    exclude    = optional(list(map(map(string))), [])
+  }))
+  default = {
+    default = {
+      name       = "Default Access Group"
+      is_default = true
+      include    = []
+      require    = []
+      exclude    = []
     }
-  ]
-  all_tags = concat([for k, v in local.applications_data : v.app_tags]...)
+  }
+}
 
+variable "cloudflare_tunnels" {
+  description = "Map of Cloudflare tunnels to create. Key is the name of the tunnel, value is an object with the following properties: name (string), config (map). The config property should be a map that defines the configuration for the tunnel, such as the tunnel's credentials file and any additional settings required for the tunnel."
+  type = map(object({
+    name       = string
+    account_id = string
+  }))
+}
+
+variable "access_policies" {
+  description = "Map of access policies to create. Key is the name of the access policy, value is a list of email lists to include in the policy."
+  type = map(object({
+    policy_name       = string
+    approval_required = optional(bool, false)
+    decision          = optional(string, "allow")
+    session_duration  = optional(string, "24h")
+    include           = optional(list(map(map(string))), [])
+    require           = optional(list(map(map(string))), [{ "geo" : { "country_code" = "PLACEHOLDER" } }])
+    exclude           = optional(list(map(map(string))), [])
+  }))
+  default = {
+    default = {
+      policy_name      = "Default Policy"
+      session_duration = "24h"
+    }
+  }
+}
+
+variable "cloudflare_applications" {
+  description = "Map of Cloudflare applications to create. Key is the name of the application, value is an object with the following properties: name (string), domain (string), subdomain (string), ingress (map). The ingress property should be a map that defines the configuration for the application's ingress, such as the protocol, host, port, and any additional settings required for the application's ingress."
+  type = map(object({
+    name      = string
+    domain    = string
+    subdomain = string
+    destinations = optional(list(object({
+      type = string
+      uri  = string
+    })), null)
+    tunnel_id          = optional(string, null)
+    identity_providers = optional(list(string), [])
+    policies = optional(list(object({
+      policy_key = string
+      precedence = number
+    })), [])
+    ingress = object({
+      protocol       = optional(string, "https")
+      host           = optional(string, "localhost")
+      port           = optional(string, "443")
+      origin_request = optional(map(string), { no_tls_verify = false })
+    })
+    app_tags = optional(list(string), null)
+  }))
+}
+
+locals {
+  access_policies_with_lookups = {
+    for policy_name, policy_data in var.access_policies : policy_name => merge(
+      policy_data,
+      # Lookup for key "group" and "login_method" in include, require, exclude and convert id value to cloudflare_zero_trust_access_group.my_access_groups.id reference
+      {
+        for action in ["include", "require", "exclude"] : action => [
+          for verb in policy_data[action] : merge(
+            verb,
+            contains(keys(verb), "group") ? {
+              group = {
+                id = try(
+                  cloudflare_zero_trust_access_group.my_access_groups[verb.group.id].id,
+                  null
+                )
+              }
+            } : {},
+            contains(keys(verb), "login_method") ? {
+              login_method = {
+                id = lookup(local.login_methods, verb.login_method.id, "UNKNOWN_LOGIN_METHOD ID: ${verb.login_method.id}")
+              }
+            } : {}
+          )
+        ]
+      }
+    )
+  }
+
+  access_group_with_email_lookups = {
+    for group_name, group_data in var.access_groups : group_name => merge(
+      group_data,
+      # Lookup for key "email_list" in include, require, exclude and convert id value to cloudflare_zero_trust_list.email_list.id reference
+      {
+        for action in ["include", "require", "exclude"] : action => [
+          for verb in group_data[action] : merge(
+            verb,
+            contains(keys(verb), "email_list") ? {
+              email_list = {
+                id = try(cloudflare_zero_trust_list.email_list[verb.email_list.id].id, null)
+              }
+            } : { for k, v in verb : k => v }
+          )
+        ]
+      }
+    )
+  }
+
+  applications = {
+    for app_name, app_data in var.cloudflare_applications : app_name => merge(
+      app_data,
+      {
+        tunnel_id          = try(cloudflare_zero_trust_tunnel_cloudflared.tunnels[app_data.tunnel_id].id, null)
+        policies           = [for policy in app_data.policies : try(cloudflare_zero_trust_access_policy.access_policy[lower(title(policy))].id, policy)]
+        identity_providers = [for idp in app_data.identity_providers : try(local.login_methods[lower(idp)], idp)]
+      }
+    )
+  }
+
+  tunnel_ingress = concat([
+    for config in values(local.applications) : merge(
+      {
+        hostname       = "${config.subdomain}.${config.domain}"
+        service        = "${try(config.ingress.protocol, "https")}://${try(config.ingress.host, "localhost")}:${try(config.ingress.port, "443")}"
+        origin_request = config.ingress.origin_request
+      }
+    )
+  ])
+
+  all_tags = concat([for k, v in local.applications : v.app_tags]...)
+  login_methods = {
+    google_auth = cloudflare_zero_trust_access_identity_provider.google.id
+  }
 }
