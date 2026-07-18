@@ -21,6 +21,14 @@ resource "cloudflare_zero_trust_access_identity_provider" "google" {
   account_id = cloudflare_account.my_account.id
 }
 
+resource "cloudflare_zero_trust_access_identity_provider" "otp" {
+  config = {
+  }
+  name       = "One-Time Pin"
+  type       = "onetimepin"
+  account_id = cloudflare_account.my_account.id
+}
+
 resource "cloudflare_zero_trust_access_tag" "tags" {
   for_each   = toset(local.all_tags)
   account_id = cloudflare_account.my_account.id

@@ -176,5 +176,6 @@ locals {
   all_tags = concat([for k, v in local.applications : v.app_tags]...)
   login_methods = {
     google_auth = cloudflare_zero_trust_access_identity_provider.google.id
+    otp         = cloudflare_zero_trust_access_identity_provider.otp.id
   }
 }
