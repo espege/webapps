@@ -8,7 +8,7 @@ resource "cloudflare_zero_trust_access_application" "my_zero_trust_app" {
   allow_iframe                = var.app_allow_iframe
   allowed_idps                = var.app_identity_providers
   app_launcher_visible        = true
-  auto_redirect_to_identity   = true
+  auto_redirect_to_identity   = length(var.app_identity_providers) == 1 ? true : false
   destinations                = var.destinations
   enable_binding_cookie       = false
   http_only_cookie_attribute  = true
