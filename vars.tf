@@ -111,24 +111,28 @@ locals {
       policy_data,
       # Lookup for key "group" and "login_method" in include, require, exclude and convert id value to cloudflare_zero_trust_access_group.my_access_groups.id reference
       {
-        for action in ["include", "require", "exclude"] : action => [
-          for verb in policy_data[action] : merge(
-            verb,
-            contains(keys(verb), "group") ? {
-              group = {
-                id = try(
-                  cloudflare_zero_trust_access_group.my_access_groups[verb.group.id].id,
-                  null
-                )
-              }
-            } : {},
-            contains(keys(verb), "login_method") ? {
-              login_method = {
-                id = lookup(local.login_methods, verb.login_method.id, "UNKNOWN_LOGIN_METHOD ID: ${verb.login_method.id}")
-              }
-            } : {}
-          )
-        ]
+        for action in ["include", "require", "exclude"] : action => flatten([
+          for verb in policy_data[action] : [
+            for condition_key in keys(verb) : merge(
+              {
+                (condition_key) = verb[condition_key]
+              },
+              condition_key == "group" ? {
+                group = {
+                  id = try(
+                    cloudflare_zero_trust_access_group.my_access_groups[verb.group.id].id,
+                    null
+                  )
+                }
+              } : {},
+              condition_key == "login_method" ? {
+                login_method = {
+                  id = lookup(local.login_methods, verb.login_method.id, "UNKNOWN_LOGIN_METHOD ID: ${verb.login_method.id}")
+                }
+              } : {}
+            )
+          ]
+        ])
       }
     )
   }
@@ -138,16 +142,20 @@ locals {
       group_data,
       # Lookup for key "email_list" in include, require, exclude and convert id value to cloudflare_zero_trust_list.email_list.id reference
       {
-        for action in ["include", "require", "exclude"] : action => [
-          for verb in group_data[action] : merge(
-            verb,
-            contains(keys(verb), "email_list") ? {
-              email_list = {
-                id = try(cloudflare_zero_trust_list.email_list[verb.email_list.id].id, null)
-              }
-            } : { for k, v in verb : k => v }
-          )
-        ]
+        for action in ["include", "require", "exclude"] : action => flatten([
+          for verb in group_data[action] : [
+            for condition_key in keys(verb) : merge(
+              {
+                (condition_key) = verb[condition_key]
+              },
+              condition_key == "email_list" ? {
+                email_list = {
+                  id = try(cloudflare_zero_trust_list.email_list[verb.email_list.id].id, null)
+                }
+              } : {}
+            )
+          ]
+        ])
       }
     )
   }
