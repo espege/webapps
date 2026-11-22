@@ -105,6 +105,13 @@ variable "cloudflare_applications" {
   }))
 }
 
+variable "smtp_verified_sender_records" {
+  description = "Map of SMTP verified sender records to create. Key is the name of the record, value is an object with the following properties: name (string), content (string)."
+  type = map(object({
+    content = string
+  }))
+}
+
 locals {
   access_policies_with_lookups = {
     for policy_name, policy_data in var.access_policies : policy_name => merge(
