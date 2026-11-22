@@ -7,7 +7,7 @@ resource "cloudflare_dns_record" "smtp_verified_sender_records" {
   type     = "CNAME"
   comment  = "Verify Sender DNS records"
   content  = each.value.content
-  proxied  = true
+  proxied  = false
   settings = {
     flatten_cname = false
   }
